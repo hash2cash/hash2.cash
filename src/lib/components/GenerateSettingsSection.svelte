@@ -1,28 +1,43 @@
 <script>
   import { tick } from 'svelte';
   import Tooltip from './Tooltip.svelte';
+  import { address, networks } from 'flokicoinjs-lib';
+  import {
+    estimateSharenote,
+    planSharenoteFromHashrate,
+    parseNoteLabel,
+    noteFromComponents,
+    HashrateUnit,
+    ReliabilityId,
+  } from '@soprinter/sharenotejs';
 
-  let value = '';
-  function handleInput(e) {
-    let v = e.target.value.toLowerCase();
-    v = v.replace(/[^0-9z]/g, '');
-    const parts = v.split('z'); // Enforce structure: digits + z + digits
-    const first = parts[0]?.slice(0, 2) || '';
-    const second = parts[1]?.slice(0, 2) || '';
-    value = first + (v.includes('z') ? 'z' : '') + second;
-  }
- 
-  function handleHashrateInput(e) {
-    hashrateValue = '';
-  }
- 
+  const TARGET_SECONDS = 5;
+  const DEFAULT_RELIABILITY = ReliabilityId.Mean;
+  const MAX_SHARENOTE_LABEL = '256Z00';
+  const MAX_SHARENOTE_ZBITS = noteFromComponents(256, 0).zBits;
+  const MIN_SHARENOTE_LABEL = '1Z00';
+  const MIN_SHARENOTE_ZBITS = noteFromComponents(1, 0).zBits;
+  const HASHRATE_UNIT_MAP = {
+    'H/s': HashrateUnit.Hps,
+    'kH/s': HashrateUnit.KHps,
+    'MH/s': HashrateUnit.MHps,
+    'GH/s': HashrateUnit.GHps,
+    'TH/s': HashrateUnit.THps,
+    'PH/s': HashrateUnit.PHps,
+    'EH/s': HashrateUnit.EHps,
+  };
+  const FLC_NETWORK = networks.bitcoin;
+  const LEGACY_PREFIXES = new Set([
+    FLC_NETWORK.pubKeyHash,
+    FLC_NETWORK.scriptHash,
+  ]);
+  const DEFAULT_NOTE = '0';
 
   let wallet = '';
   let worker = '';
   let sharenote = '';
   let hashrate = '';
   let hashrateUnit = 'GH/s';
-  let requiredHashrate = '';
   let showNote = true;
   let showRate = false;
   let isHidden = true;
@@ -30,12 +45,51 @@
   let buildCommand = () => '';
   let copied = false;
 
+  let walletError = '';
+  let sharenoteError = '';
+  let hashrateError = '';
+
+  let walletTouched = false;
+  let sharenoteTouched = false;
+  let hashrateTouched = false;
+
+  let sharenoteBill = null;
+  let hashratePlan = null;
+  let parsedSharenoteLabel = '';
+  let generatedNoteResult = null;
+  let generatedRateResult = null;
+
+  let walletInput;
   let sharenoteInput;
   let hashrateInput;
+  let outputSection;
+  let copiedField = '';
 
   let stratumUrl = 'stratum+tcp://hash2.cash:3333';
   let sUser = '';
   let sPass = '';
+
+  $: {
+    const trimmed = wallet.trim();
+    if (!trimmed) {
+      walletError = '';
+      setWalletValidity('');
+    } else {
+      const normalized = trimmed.toLowerCase();
+      if (wallet !== normalized) {
+        wallet = normalized;
+      } else {
+        walletError = validateWallet(normalized);
+        setWalletValidity(walletError);
+      }
+    }
+  }
+
+  $: analyzeSharenoteInput(sharenote);
+  $: setSharenoteValidity(showNote ? sharenoteError : '');
+
+  $: planHashrateFromInput(hashrate, hashrateUnit);
+  $: setHashrateValidity(showRate ? hashrateError : '');
 
   async function showSharenote() {
     isHidden = true;
@@ -43,7 +97,8 @@
     showNote = true;
     showRate = false;
     await tick();
-    sharenoteInput.focus();
+    sharenoteTouched = false;
+    sharenoteInput?.focus();
   }
 
   async function showHashrate() {
@@ -52,18 +107,9 @@
     showNote = false;
     showRate = true;
     await tick();
-    hashrateInput.focus();
+    hashrateTouched = false;
+    hashrateInput?.focus();
   }
-
-
-
-  function getHashrate() {
-    return '11.2 GH/s.';
-  };
-
-  function getSharenote() {
-    return '33Z61';
-  };
 
   const resetCopyState = async () => {
     copied = true;
@@ -75,21 +121,97 @@
 
   const walletHandle = () => wallet.trim() || 'FLC_WALLET';
   const workerHandle = () => worker.trim() || 'Worker1';
-  const sharenoteHandle = () => sharenote.trim().replace(/\s+/g, '') || '0';
-  const hashrateHandle = () => hashrate || '0';
 
-  const generateCommand = () => {
+  async function copyInfo(value, label) {
+    if (!value) {
+      return;
+    }
+
+    try {
+      await navigator.clipboard.writeText(value);
+      copiedField = label;
+      setTimeout(() => {
+        if (copiedField === label) {
+          copiedField = '';
+        }
+      }, 2000);
+    } catch (error) {
+      console.error('Unable to copy value', error);
+    }
+  }
+
+  function handleCopyShortcut(event, value, label) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      copyInfo(value, label);
+    }
+  }
+
+  const generateCommand = async () => {
+    const isValid =
+      passType === 0
+        ? analyzeSharenoteInput(sharenote)
+        : planHashrateFromInput(hashrate, hashrateUnit);
+
+    if (!isValid) {
+      if (passType === 0) {
+        sharenoteTouched = true;
+        setSharenoteValidity(sharenoteError);
+      } else {
+        hashrateTouched = true;
+        setHashrateValidity(hashrateError);
+      }
+      return;
+    }
+
     isHidden = false;
     sUser = `${walletHandle()}.${workerHandle()}`;
-    if(passType === 0){
-      sPass = `sharenote:${sharenoteHandle()}`;
+    const passNote =
+      passType === 0
+        ? getTargetSharenoteLabel()
+        : getPlannedSharenoteLabel();
+    sPass = `${passNote}`;
+    buildCommand = () =>
+      `${stratumUrl} -u ${walletHandle()}.${workerHandle()} -p ${sPass}`;
 
-    } else if(passType === 1){
-      sPass = `sharenote:${getSharenote()}`;
+    if (passType === 0) {
+      const noteLabel =
+        sharenoteBill?.sharenote?.label ||
+        parsedSharenoteLabel ||
+        sharenote.trim().replace(/\s+/g, '').toUpperCase();
+      generatedNoteResult = {
+        label: noteLabel || '--',
+        required: sharenoteBill?.requiredHashrateHuman?.display || '--',
+      };
+    } else {
+      generatedRateResult = {
+        planned: hashratePlan?.sharenote?.label || '--',
+        input:
+          hashratePlan?.inputHashrateHuman?.display ||
+          (hashrate ? `${hashrate} ${hashrateUnit}` : '--'),
+      };
     }
-    buildCommand = () => `${stratumUrl} -u ${walletHandle()}.${workerHandle()} -p ${sPass}`;
-    
+
+    await tick();
+    scrollToOutputSection();
   };
+
+  function scrollToOutputSection() {
+    if (!outputSection || typeof window === 'undefined') {
+      return;
+    }
+
+    const headerHeight =
+      document.querySelector('.site-header')?.offsetHeight ?? 0;
+    const padding = 16;
+    const target =
+      outputSection.getBoundingClientRect().top +
+      window.scrollY -
+      headerHeight -
+      padding;
+
+    window.scrollTo({ top: target, behavior: 'smooth' });
+  }
 
   const copyCommand = async () => {
     try {
@@ -99,7 +221,157 @@
       console.error('Unable to copy miner settings', error);
     }
   };
+
+  function validateWallet(value) {
+    try {
+      const decoded = address.fromBech32(value);
+      if (decoded.prefix !== FLC_NETWORK.bech32) {
+        return 'Use a mainnet Flokicoin address (fc...).';
+      }
+      return '';
+    } catch (error) {
+      return legacyOrInvalidMessage(value);
+    }
+  }
+
+  function legacyOrInvalidMessage(value) {
+    try {
+      const { version } = address.fromBase58Check(value);
+      if (LEGACY_PREFIXES.has(version)) {
+        return 'Legacy Flokicoin addresses (starting with F or 3) are not supported.';
+      }
+    } catch (legacyError) {
+      // Ignore decoding errors; treat as invalid below.
+    }
+    return 'Enter a valid Flokicoin address.';
+  }
+
+  function setWalletValidity(message) {
+    if (walletInput) {
+      walletInput.setCustomValidity(message || '');
+    }
+  }
+
+  function setSharenoteValidity(message) {
+    if (sharenoteInput) {
+      sharenoteInput.setCustomValidity(message || '');
+    }
+  }
+
+  function setHashrateValidity(message) {
+    if (hashrateInput) {
+      hashrateInput.setCustomValidity(message || '');
+    }
+  }
+
+  function getTargetSharenoteLabel(forDisplay = false) {
+    if (sharenoteBill?.sharenote?.label) {
+      return sharenoteBill.sharenote.label;
+    }
+    if (parsedSharenoteLabel) {
+      return parsedSharenoteLabel;
+    }
+
+    const cleaned = sharenote.trim().replace(/\s+/g, '').toUpperCase();
+    if (cleaned) {
+      return cleaned;
+    }
+    return forDisplay ? '--' : DEFAULT_NOTE;
+  }
+
+  function getPlannedSharenoteLabel(forDisplay = false) {
+    if (hashratePlan?.sharenote?.label) {
+      return hashratePlan.sharenote.label;
+    }
+    return forDisplay ? '--' : DEFAULT_NOTE;
+  }
+
+  function analyzeSharenoteInput(inputValue) {
+    const trimmed = `${inputValue ?? ''}`.trim();
+    sharenoteBill = null;
+    parsedSharenoteLabel = '';
+    if (!trimmed) {
+      sharenoteError = '';
+      return false;
+    }
+    try {
+      const normalizedNote = trimmed.replace(/\s+/g, '').toUpperCase();
+      const parsed = parseNoteLabel(normalizedNote);
+      const canonical = noteFromComponents(parsed.z, parsed.cents);
+      if (canonical.zBits > MAX_SHARENOTE_ZBITS) {
+        sharenoteError = `Maximum supported sharenote is ${MAX_SHARENOTE_LABEL}.`;
+        return false;
+      }
+      if (canonical.zBits < MIN_SHARENOTE_ZBITS) {
+        sharenoteError = `Minimum supported sharenote is ${MIN_SHARENOTE_LABEL}.`;
+        return false;
+      }
+      parsedSharenoteLabel = canonical.label;
+      sharenoteBill = estimateSharenote(canonical, TARGET_SECONDS, {
+        reliability: DEFAULT_RELIABILITY,
+      });
+      sharenoteError = '';
+      return true;
+    } catch (error) {
+      sharenoteError =
+        error instanceof Error ? error.message : 'Invalid sharenote';
+      return false;
+    }
+  }
+
+  function planHashrateFromInput(value, unitLabel) {
+    const raw = `${value ?? ''}`.trim();
+    hashratePlan = null;
+    if (!raw) {
+      hashrateError = '';
+      return false;
+    }
+    const numericValue = Number(raw);
+    if (!Number.isFinite(numericValue) || numericValue <= 0) {
+      hashrateError = 'Enter a positive hashrate.';
+      return false;
+    }
+    const unit = HASHRATE_UNIT_MAP[unitLabel];
+    if (!unit) {
+      hashrateError = 'Select a hashrate unit.';
+      return false;
+    }
+    try {
+      const plan = planSharenoteFromHashrate({
+        hashrate: { value: numericValue, unit },
+        seconds: TARGET_SECONDS,
+        reliability: DEFAULT_RELIABILITY,
+      });
+      if (plan.sharenote.zBits > MAX_SHARENOTE_ZBITS) {
+        hashrateError = `Hashrate must target a sharenote ≤ ${MAX_SHARENOTE_LABEL}.`;
+        return false;
+      }
+      if (plan.sharenote.zBits < MIN_SHARENOTE_ZBITS) {
+        hashrateError = `Hashrate must target a sharenote ≥ ${MIN_SHARENOTE_LABEL}.`;
+        return false;
+      }
+      hashratePlan = plan;
+      hashrateError = '';
+      return true;
+    } catch (error) {
+      hashrateError =
+        error instanceof Error ? error.message : 'Unable to plan sharenote.';
+      return false;
+    }
+  }
+
+  function handleToggleKey(event, mode) {
+    if (event.key === 'Enter' || event.key === ' ') {
+      event.preventDefault();
+      if (mode === 'hashrate') {
+        showHashrate();
+      } else {
+        showSharenote();
+      }
+    }
+  }
 </script>
+
 
 <section id="generate">
   <div class="container">
@@ -146,10 +418,15 @@
                 placeholder="FLC Address"
                 spellcheck="false"
                 bind:value={wallet}
+                bind:this={walletInput}
                 autocomplete="off"
                 required
+                on:blur={() => (walletTouched = true)}
               />
             </span>
+            {#if walletError && walletTouched}
+              <p class="field-error" aria-live="polite">{walletError}</p>
+            {/if}
           </div>
           <div class="field">
             <label for="worker">
@@ -173,14 +450,24 @@
 {#if showNote}
         <div class="grid two">
           <div class="field">
-            <p class="hidden">You can set your Target Sharenote, or specify your Hashrate and we will recommend a sharenote you can print</p>
-            <label for="sharenote">
-              Target Sharenote
-              <Tooltip text="target sharenote help">
-                <span class="tooltip">?</span>
-              </Tooltip>
+          <div class="label-row">
+            <label for="sharenote" class="field-label">
+              <span class="label-main">
+                Target Sharenote
+              </span>
+              <span
+                role="button"
+                class="label-toggle"
+                tabindex="0"
+                on:click={showHashrate}
+                on:keydown={(event) => handleToggleKey(event, 'hashrate')}
+                aria-label="Switch to hashrate input"
+              >
+                Hashrate ?
+              </span>
             </label>
-            
+          </div>
+
             <div>
               <input
                 id="sharenote"
@@ -192,10 +479,13 @@
                 bind:this={sharenoteInput}
                 spellcheck="false"
                 autocomplete="off"
-                on:input={handleInput}
                 required
+                on:blur={() => (sharenoteTouched = true)}
               />
             </div>
+            {#if sharenoteError && sharenoteTouched && showNote}
+              <p class="field-error" aria-live="polite">{sharenoteError}</p>
+            {/if}
             <div class="hint pt-x1">
               <span>✨</span>
               <p>Use <a href="http://planner.sharenote.xyz" target="_blank" class="btn1">Sharenote Print Planner</a> to calculate target sharenote you can print using a given hashrate.</p>
@@ -207,13 +497,24 @@
 {#if showRate}
         <div class="grid two">
           <div class="field">
-            <label for="hashrate">
-              Average hashrate
-              <Tooltip text="hashrate help">
-                <span class="tooltip">?</span>
-              </Tooltip>
+          <div class="label-row">
+            <label for="hashrate" class="field-label">
+              <span class="label-main">
+                Average hashrate
+              </span>
+              <span
+                role="button"
+                class="label-toggle"
+                tabindex="0"
+                on:click={showSharenote}
+                on:keydown={(event) => handleToggleKey(event, 'sharenote')}
+                aria-label="Switch to target sharenote input"
+              >
+                Sharenote ?
+              </span>
             </label>
-            
+          </div>
+
             <div>
               <input
                 id="hashrate"
@@ -227,8 +528,8 @@
                 bind:this={hashrateInput}
                 spellcheck="false"
                 autocomplete="off"
-                on:input={handleHashrateInput}
                 required
+                on:blur={() => (hashrateTouched = true)}
 
               />
               <select class="mw100" id="hashrateUnit" bind:value={hashrateUnit}>
@@ -241,6 +542,9 @@
                 <option>EH/s</option>
               </select>
             </div>
+            {#if hashrateError && hashrateTouched && showRate}
+              <p class="field-error" aria-live="polite">{hashrateError}</p>
+            {/if}
           </div>
         </div>
 {/if}
@@ -346,15 +650,27 @@
 
       </form>
 
-      <div class="output" class:hidden={isHidden}>
+      <div class="output" class:hidden={isHidden} bind:this={outputSection}>
         <div class="note">
           <span class="info"></span>
           {#if showNote}
-            To print {sharenote}, your average hashrate should be at least {getHashrate()}
+            <p class="note__text">
+              {#if generatedNoteResult}
+                To print <strong>{generatedNoteResult.label}</strong>, your average hashrate should be at least <strong>{generatedNoteResult.required}</strong>.
+              {:else}
+                Enter a target sharenote above to preview the required hashrate.
+              {/if}
+            </p>
           {/if}
 
           {#if showRate}
-            At {hashrate} {hashrateUnit} average hashrate, you can print {getSharenote()} every ~5 s.
+            <p class="note__text">
+              {#if generatedRateResult}
+                At {generatedRateResult.input} average hashrate, you can print {generatedRateResult.planned} every ~{TARGET_SECONDS} s.
+              {:else}
+                Provide your average hashrate to see how often you can print.
+              {/if}
+            </p>
           {/if}
         </div>
 
@@ -362,29 +678,53 @@
           <div class="setkey">Stratum URL</div>
           <div class="setvalue">
             <div class="setval">{stratumUrl}</div>
-            <span class="setcopy"></span>
+            <span
+              class="setcopy"
+              role="button"
+              tabindex="0"
+              aria-label="Copy stratum URL"
+              on:click={() => copyInfo(stratumUrl, 'Stratum URL')}
+              on:keydown={(event) => handleCopyShortcut(event, stratumUrl, 'Stratum URL')}
+            ></span>
           </div>
           <div class="setkey">Username</div>
           <div class="setvalue">
             <div class="setval">{sUser}</div>
-            <span class="setcopy"></span>
+            <span
+              class="setcopy"
+              role="button"
+              tabindex="0"
+              aria-label="Copy miner username"
+              on:click={() => copyInfo(sUser, 'Username')}
+              on:keydown={(event) => handleCopyShortcut(event, sUser, 'Username')}
+            ></span>
           </div>
           <div class="setkey">Password</div>
           <div class="setvalue">
             <div class="setval">{sPass}</div>
-            <span class="setcopy"></span>
+            <span
+              class="setcopy"
+              role="button"
+              tabindex="0"
+              aria-label="Copy miner password"
+              on:click={() => copyInfo(sPass, 'Password')}
+              on:keydown={(event) => handleCopyShortcut(event, sPass, 'Password')}
+            ></span>
           </div>
         </div>
         
-        <div class="relative"><pre><code id="command">{buildCommand()}</code></pre></div>
-        <div class="output__header">
-          <button class="btn secondary" type="button" on:click={copyCommand}>
-            {#if copied}
-              Copied!
-            {:else}
-              Copy
-            {/if}
-          </button>
+        <div class="command-block">
+          <p class="command-hint">Paste this command into your miner's CLI to start hashing.</p>
+          <div class="command-shell">
+            <pre><code id="command">{buildCommand()}</code></pre>
+            <button class="command-copy" type="button" on:click={copyCommand} aria-label="Copy command">
+              {#if copied}
+                Copied!
+              {:else}
+                Copy
+              {/if}
+            </button>
+          </div>
         </div>
       </div>
 
@@ -396,10 +736,42 @@
   ul{
     padding-left:1.2rem;
   }
+  .field-error {
+    color: #f87171;
+    font-size: 0.85rem;
+    margin-top: 0.4rem;
+  }
   .generator {
     display: grid;
     gap: 2.5rem;
     padding:7rem;
+    width: 100%;
+    max-width: 100%;
+    box-sizing: border-box;
+    overflow-wrap: anywhere;
+  }
+
+  .card.generator {
+    width: 100%;
+    box-sizing: border-box;
+  }
+
+  @media (max-width: 1024px) {
+    .generator {
+      padding: 4rem;
+    }
+  }
+
+  @media (max-width: 768px) {
+    .generator {
+      padding: 2.5rem;
+    }
+  }
+
+  @media (max-width: 560px) {
+    .generator {
+      padding: 1.5rem;
+    }
   }
 
   .generator__intro {
@@ -471,7 +843,16 @@
   }
 
   .grid.two {
-    grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 1.5rem;
+    align-items: flex-start;
+  }
+
+  @media (max-width: 640px) {
+    .grid.two {
+      grid-template-columns: minmax(0, 1fr);
+    }
   }
 
   .grid.wal{
@@ -501,6 +882,56 @@
     font-weight: 500;
     color: rgba(10, 31, 51, 0.45);
     font-size: 0.9rem;
+  }
+
+  .label-row {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.35rem;
+    margin-bottom: 0.15rem;
+    flex-wrap: wrap;
+  }
+
+  .field-label {
+    display: flex;
+    align-items: center;
+    gap: 0.35rem;
+    font-weight: 600;
+    color: rgba(10, 31, 51, 0.8);
+  }
+
+  
+
+  .label-toggle {
+    border: none;
+    background: transparent;
+    padding: 0.15rem 0.4rem;
+    font-size: 0.85rem;
+    font-weight: 600;
+    color: rgba(10, 31, 51, 0.65);
+    border-radius: 999px;
+    border-bottom: 1px solid transparent;
+    cursor: pointer;
+    transition: border-color 0.2s ease, color 0.2s ease;
+      border-color: rgba(10, 31, 51, 0.2);
+  }
+
+  .label-toggle:focus-visible {
+    outline: 2px solid rgba(37, 99, 235, 0.8);
+    outline-offset: 2px;
+  }
+
+  @media (max-width: 520px) {
+    .label-row {
+      flex-wrap: wrap;
+      gap: 0.35rem;
+    }
+
+    .label-toggle {
+      flex: 1;
+      min-width: 140px;
+      text-align: center;
+    }
   }
 
   .tooltip {
@@ -550,11 +981,65 @@
     /* padding: 1.5rem; */
   }
 
-  .output__header {
-    display: flex;
-    justify-content: flex-end;
-    align-items: center;
-    gap: 1rem;
+  .command-block {
+    display: grid;
+    gap: 0.75rem;
+  }
+
+  .command-hint {
+    font-size: 0.95rem;
+    color: rgba(10, 31, 51, 0.75);
+  }
+
+  .command-shell {
+    position: relative;
+    background: rgba(17, 24, 39, 0.85);
+    border-radius: 12px;
+    padding: 1rem 3.5rem 1rem 1.2rem;
+    overflow-x: auto;
+  }
+
+  .command-copy {
+    position: absolute;
+    right: 0.8rem;
+    transform: translateY(-50%);
+    top: 50%;
+    border: none;
+    background: #1c4ed8;
+    color: #fff;
+    font-size: 0.8rem;
+    font-weight: 600;
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    cursor: pointer;
+    white-space: nowrap;
+    transition: background 0.18s ease, box-shadow 0.18s ease;
+  }
+
+  .command-copy:hover {
+    background: #1537a8;
+    box-shadow: 0 8px 16px -10px rgba(28, 78, 216, 0.5);
+  }
+
+  .command-shell pre {
+    background: transparent;
+    padding: 0;
+    margin: 0;
+    min-width: 0;
+    width: 100%;
+  }
+
+  @media (max-width: 480px) {
+    .command-shell {
+      padding-right: 1.2rem;
+      padding-bottom: 3rem;
+    }
+
+    .command-copy {
+      top: auto;
+      bottom: 0.8rem;
+      transform: none;
+    }
   }
 
   pre {
@@ -564,6 +1049,7 @@
     border-radius: 12px;
     font-size: 0.95rem;
     overflow-x: auto;
+    max-width: 100%;
   }
 
   pre code {
@@ -580,7 +1066,6 @@
 .mw130{max-width:130px}
 .mw100{max-width:100px}
 .pt-x1{margin-top:5px}
-.relative{position:relative;overflow-x:auto;}
 
 
 .group{
@@ -608,35 +1093,86 @@
   color: #00000080;
 }
 
-.setvalue{
-  margin-bottom: 14px;
-  display: flex;
-  align-items: center;
-  gap: 8px;
+  .setvalue{
+    margin-bottom: 14px;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    flex-wrap: wrap;
+  }
+
+  .setval{
+    font-weight: 600;
+    flex: 0 1 auto;
+    min-width: 0;
+    max-width: calc(100% - 32px);
+    word-break: break-word;
+    overflow-wrap: anywhere;
+  }
+
+  .setcopy{
+    background-image:url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 2C2.895 2 2 2.895 2 4v14h2V4h14V2H4zM8 6C6.895 6 6 6.895 6 8v12c0 1.105.895 2 2 2h12c1.105 0 2-.895 2-2V8c0-1.105-.895-2-2-2H8zm0 2h12v12H8V8z' fill='rgb(84 143 255)'/%3E%3C/svg%3E");
+    background-size: 100%;
+    background-repeat: no-repeat;
+    background-position: center;
+    width:16px;
+    height:16px;
+    display:inline-block;
+    cursor:pointer;
+    flex-shrink: 0;
+  }
+
+.setcopy:focus-visible{
+  outline: 2px solid #1c4ed8;
+  outline-offset: 4px;
 }
 
-.setval{
-  font-weight: 600;
+@media (max-width: 640px) {
+  .setvalue {
+    align-items: center;
+    justify-content: space-between;
+    gap: 4px;
+  }
+
+  .setval {
+    flex: 1 1 auto;
+    max-width: calc(100% - 32px);
+  }
+
+  .setcopy {
+    margin-left: auto;
+  }
 }
 
-.setcopy{
-  background-image:url("data:image/svg+xml,%3Csvg width='24' height='24' viewBox='0 0 24 24' xmlns='http://www.w3.org/2000/svg'%3E%3Cpath d='M4 2C2.895 2 2 2.895 2 4v14h2V4h14V2H4zM8 6C6.895 6 6 6.895 6 8v12c0 1.105.895 2 2 2h12c1.105 0 2-.895 2-2V8c0-1.105-.895-2-2-2H8zm0 2h12v12H8V8z' fill='rgb(84 143 255)'/%3E%3C/svg%3E");
-  background-size: 100%;
-  width:16px;height:16px;
-  display:inline-block;
-  cursor:pointer;
-}
+  .note{
+    background: #ccf8cc;
+    color: #00000099;
+    font-size: .9rem;
+    padding: 1rem;
+    border-radius: 10px;
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 0.75rem;
+    align-items: center;
+  }
 
-.note{
-  background: #ccf8cc;
-  color: #00000099;
-  font-size: .9rem;
-  padding: 1rem;
-  border-radius: 10px;
-  display:flex;
-  align-items: center;
-  gap: 6px;
-}
+  .note__text {
+    margin: 0;
+    font-size: 0.9rem;
+    color: #00000099;
+    min-width: 0;
+  }
+
+  .note__text strong {
+    font-weight: 700;
+    color: #0a1f33;
+  }
+
+  @media (max-width: 520px) {
+    .note {
+      grid-template-columns: auto 1fr;
+    }
+  }
 
 .info{
   background:url('data:image/svg+xml,<svg width="24" height="24" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink"><rect width="24" height="24" stroke="none" fill="%23000000" opacity="0"/><g transform="matrix(1.43 0 0 1.43 12 12)" ><g style="" ><g transform="matrix(1 0 0 1 0 0)" ><circle style="stroke: rgb(0,0,0); stroke-width: 1; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" cx="0" cy="0" r="6.5" /></g><g transform="matrix(1 0 0 1 0 1.75)" ><line style="stroke: rgb(0,0,0); stroke-width: 1; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" x1="0" y1="-1.75" x2="0" y2="1.75" /></g><g transform="matrix(1 0 0 1 0 -2.5)" ><circle style="stroke: rgb(0,0,0); stroke-width: 1; stroke-dasharray: none; stroke-linecap: round; stroke-dashoffset: 0; stroke-linejoin: round; stroke-miterlimit: 4; fill: none; fill-rule: nonzero; opacity: 1;" cx="0" cy="0" r="0.5" /></g></g></g></svg>');

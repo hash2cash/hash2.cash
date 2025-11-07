@@ -11,14 +11,42 @@
     isMenuOpen = !isMenuOpen;
   };
 
-  const handleNavClick = () => {
+  const closeMenu = () => {
     isMenuOpen = false;
+  };
+
+  const getBaseOrigin = () =>
+    typeof window === 'undefined' ? 'http://localhost' : window.location.origin;
+
+  const scrollToHash = (hash) => {
+    if (!hash || typeof document === 'undefined') {
+      return;
+    }
+    const anchorId = hash.startsWith('#') ? hash.slice(1) : hash;
+    const target = document.getElementById(anchorId);
+    if (target) {
+      target.scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  };
+
+  const handleAnchorNavClick = (event, href) => {
+    closeMenu();
+    if (!href || !href.includes('#')) {
+      return;
+    }
+    const url = new URL(href, getBaseOrigin());
+    const currentPath =
+      typeof window === 'undefined' ? '/' : window.location.pathname;
+    if (url.pathname === currentPath) {
+      event.preventDefault();
+      scrollToHash(url.hash);
+    }
   };
 </script>
 
 <header class="site-header">
   <div class="container header__inner">
-    <a class="brand" href="/" on:click={handleNavClick}>
+    <a class="brand" href="/" on:click={closeMenu}>
       <span class="brand__name">Hash2Cash</span>
     </a>
     <button
@@ -40,12 +68,21 @@
       <ul>
         {#each links as link}
           <li>
-            <a href={link.href} on:click={handleNavClick}>{link.label}</a>
+            <a
+              href={link.href}
+              on:click={(event) => handleAnchorNavClick(event, link.href)}
+            >
+              {link.label}
+            </a>
           </li>
         {/each}
         <li><a href="https://github.com/hash2cash" target="_blank" class="flex"><span class="github"></span></a></li>
       </ul>
-      <a class="btn secondary header__cta" href="/#generate" on:click={handleNavClick}>
+      <a
+        class="btn secondary header__cta"
+        href="/#generate"
+        on:click={(event) => handleAnchorNavClick(event, '/#generate')}
+      >
         Start Mining
       </a>
     </nav>
