@@ -18,5 +18,9 @@ export default defineConfig({
         contact: resolve(__dirname, 'contact/index.html')
       }
     }
+  },
+  server: {
+    allowedHosts: ['*'],
+    host: '0.0.0.0',
   }
 });
