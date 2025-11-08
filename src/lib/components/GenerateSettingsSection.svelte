@@ -75,7 +75,7 @@
       walletError = '';
       setWalletValidity('');
     } else {
-      const normalized = trimmed.toLowerCase();
+      const normalized = trimmed;
       if (wallet !== normalized) {
         wallet = normalized;
       } else {
@@ -474,7 +474,7 @@
                 name="sharenote"
                 type="text"
                 class="mw200"
-                placeholder="e.g. 32z24"
+                placeholder="e.g. 33Z00"
                 bind:value={sharenote}
                 bind:this={sharenoteInput}
                 spellcheck="false"
