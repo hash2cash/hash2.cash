@@ -20,7 +20,7 @@ export default defineConfig({
     }
   },
   server: {
-    allowedHosts: ['lab.in.ionance.com'],
+    allowedHosts: ['*'],
     host: '0.0.0.0',
   }
 });
