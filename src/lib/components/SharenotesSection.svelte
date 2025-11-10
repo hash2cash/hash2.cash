@@ -1,5 +1,12 @@
 <script>
+  import { scrollToSection } from '../utils/scrollToSection.js';
+
   const flow = ['Miner', 'Share', 'Sharenote', 'Pool Ledger', 'Payout'];
+
+  const handleStartMiningClick = (event) => {
+    event.preventDefault();
+    scrollToSection('generate');
+  };
 </script>
 
 <section class="smt" id="sharenotes">
@@ -20,7 +27,7 @@
           <li><span>✅</span><span>Enables long-term performance tracking.</span></li>
         </ul>
         <div class="cta-row">
-          <a class="btn primary sbtn" href="#generate">Print Sharenotes</a>
+          <a class="btn primary sbtn" href="/" on:click={handleStartMiningClick}>Print Sharenotes</a>
           <a class="btn secondary sbtn" href="#dashboard">Track your Sharenotes</a>
         </div>
       </div>

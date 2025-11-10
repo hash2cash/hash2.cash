@@ -1,7 +1,6 @@
 <script>
-  import { tick } from 'svelte';
+  import { tick, onDestroy } from 'svelte';
   import Tooltip from './Tooltip.svelte';
-  import { address, networks } from 'flokicoinjs-lib';
   import {
     estimateSharenote,
     planSharenoteFromHashrate,
@@ -10,6 +9,12 @@
     HashrateUnit,
     ReliabilityId,
   } from '@soprinter/sharenotejs';
+  import { getFlcAddressError } from '../utils/addressValidation.js';
+  import {
+    fetchMergeMiningEvent,
+    parseMergeMiningTags,
+    closeMergeMiningRelay,
+  } from '../utils/mergeMiningRelay.js';
 
   const TARGET_SECONDS = 5;
   const DEFAULT_RELIABILITY = ReliabilityId.Mean;
@@ -26,12 +31,8 @@
     'PH/s': HashrateUnit.PHps,
     'EH/s': HashrateUnit.EHps,
   };
-  const FLC_NETWORK = networks.bitcoin;
-  const LEGACY_PREFIXES = new Set([
-    FLC_NETWORK.pubKeyHash,
-    FLC_NETWORK.scriptHash,
-  ]);
   const DEFAULT_NOTE = '0';
+  const MERGE_MINING_PAGE = '/merge-mining';
 
   let wallet = '';
   let worker = '';
@@ -64,6 +65,9 @@
   let hashrateInput;
   let outputSection;
   let copiedField = '';
+  let mergeMiningState = 'idle';
+  let mergeMiningAddresses = [];
+  let mergeMiningError = '';
 
   let stratumUrl = 'stratum+tcp://hash2.cash:3333';
   let sUser = '';
@@ -79,7 +83,7 @@
       if (wallet !== normalized) {
         wallet = normalized;
       } else {
-        walletError = validateWallet(normalized);
+        walletError = getFlcAddressError(normalized);
         setWalletValidity(walletError);
       }
     }
@@ -164,6 +168,9 @@
       return;
     }
 
+    const normalizedWallet = wallet.trim();
+    void checkMergeMiningAddresses(normalizedWallet);
+
     isHidden = false;
     sUser = `${walletHandle()}.${workerHandle()}`;
     const passNote =
@@ -222,28 +229,49 @@
     }
   };
 
-  function validateWallet(value) {
+  async function checkMergeMiningAddresses(address) {
+    mergeMiningState = 'checking';
+    mergeMiningAddresses = [];
+    mergeMiningError = '';
+    if (!address) {
+      mergeMiningState = 'idle';
+      return;
+    }
+
     try {
-      const decoded = address.fromBech32(value);
-      if (decoded.prefix !== FLC_NETWORK.bech32) {
-        return 'Use a mainnet Flokicoin address (fc...).';
+      const event = await fetchMergeMiningEvent(address);
+      if (!event) {
+        mergeMiningState = 'not-found';
+        return;
       }
-      return '';
+      const parsed = parseMergeMiningTags(event.tags);
+      if (parsed.length) {
+        mergeMiningAddresses = parsed;
+        mergeMiningState = 'found';
+      } else {
+        mergeMiningState = 'not-found';
+      }
     } catch (error) {
-      return legacyOrInvalidMessage(value);
+      mergeMiningState = 'error';
+      mergeMiningError =
+        error instanceof Error ? error.message : 'Unable to fetch merge mining data.';
     }
   }
 
-  function legacyOrInvalidMessage(value) {
-    try {
-      const { version } = address.fromBase58Check(value);
-      if (LEGACY_PREFIXES.has(version)) {
-        return 'Legacy Flokicoin addresses (starting with F or 3) are not supported.';
-      }
-    } catch (legacyError) {
-      // Ignore decoding errors; treat as invalid below.
+  onDestroy(() => {
+    closeMergeMiningRelay();
+  });
+
+  function navigateToMergeMiningPage() {
+    if (typeof window === 'undefined') {
+      return;
     }
-    return 'Enter a valid Flokicoin address.';
+    const targetUrl = new URL(MERGE_MINING_PAGE, window.location.origin);
+    const normalized = wallet.trim();
+    if (normalized) {
+      targetUrl.searchParams.set('address', normalized);
+    }
+    window.location.href = targetUrl.href;
   }
 
   function setWalletValidity(message) {
@@ -373,7 +401,7 @@
 </script>
 
 
-<section id="generate">
+<section data-scroll-target="generate">
   <div class="container">
     <div class="card generator">
       <div class="generator__intro">
@@ -549,99 +577,7 @@
         </div>
 {/if}
 
-        <div class="hidden">
-          <details class="noshad p0">
-            <summary>Merged coins payout addresses</summary>
-            <p class="mb-1">
-              You can configure your payout addresses now, or adjust it later through the dashboard.
-            </p>
-            <div class="hiddena">
-              <fieldset class="group grp4 mb-1">
-                <div class="grid two wal">
-                  <div class="field">
-                    <span class="relat">
-                      <label for="dogewallet"><span class="icon doge"></span></label>
-                      <input
-                        id="dogewallet"
-                        name="dogewallet"
-                        type="text"
-                        class="p124"
-                        placeholder="DOGE Address"
-                        spellcheck="false"
-                        autocomplete="off"
-                      />
-                    </span>
-                  </div>
-                  <div class="field">
-                    <input
-                      id="dogesig"
-                      name="dogesig"
-                      type="text"
-                      placeholder="Signature"
-                      autocomplete="off"
-                    />
-                  </div>
-                </div>
-              </fieldset>
-
-              <fieldset class="group grp4 mb-1">
-                <div class="grid two wal">
-                  <div class="field">
-                    <span class="relat">
-                      <label for="bellswallet"><span class="icon bells"></span></label>
-                      <input
-                        id="bellswallet"
-                        name="bellswallet"
-                        type="text"
-                        class="p124"
-                        placeholder="BELLS Address"
-                        spellcheck="false"
-                        autocomplete="off"
-                      />
-                    </span>
-                  </div>
-                  <div class="field">
-                    <input
-                      id="bellssig"
-                      name="bellssig"
-                      type="text"
-                      placeholder="Signature"
-                      autocomplete="off"
-                    />
-                  </div>
-                </div>
-              </fieldset>
-
-              <fieldset class="group grp4 mb-1">
-                <div class="grid two wal">
-                  <div class="field">
-                    <span class="relat">
-                      <label for="pepwallet"><span class="icon pep"></span></label>
-                      <input
-                        id="pepwallet"
-                        name="pepwallet"
-                        type="text"
-                        class="p124"
-                        placeholder="PEP Address"
-                        spellcheck="false"
-                        autocomplete="off"
-                      />
-                    </span>
-                  </div>
-                  <div class="field">
-                    <input
-                      id="pepsig"
-                      name="pepsig"
-                      type="text"
-                      placeholder="Signature"
-                      autocomplete="off"
-                    />
-                  </div>
-                </div>
-              </fieldset>
-            </div>
-          </details>
-        </div>
+       
 
 
         <div class="center">
@@ -656,7 +592,7 @@
           {#if showNote}
             <p class="note__text">
               {#if generatedNoteResult}
-                To print <strong>{generatedNoteResult.label}</strong>, your average hashrate should be at least <strong>{generatedNoteResult.required}</strong>.
+                To print <strong>{generatedNoteResult.label}</strong> every <strong>~{TARGET_SECONDS}s</strong>, your average hashrate should be at least <strong>{generatedNoteResult.required}</strong>.
               {:else}
                 Enter a target sharenote above to preview the required hashrate.
               {/if}
@@ -666,13 +602,67 @@
           {#if showRate}
             <p class="note__text">
               {#if generatedRateResult}
-                At {generatedRateResult.input} average hashrate, you can print {generatedRateResult.planned} every ~{TARGET_SECONDS} s.
+                At <strong>{generatedRateResult.input}</strong> average hashrate, you can print <strong>{generatedRateResult.planned}</strong> every <strong>~{TARGET_SECONDS}s</strong>.
               {:else}
                 Provide your average hashrate to see how often you can print.
               {/if}
             </p>
           {/if}
         </div>
+
+         {#if mergeMiningState !== 'idle'}
+          <div class="merge-suggestions" aria-live="polite">
+            {#if mergeMiningState === 'checking'}
+              <p class="note__text">Looking up existing merge-mining payout addresses for this wallet…</p>
+            {:else if mergeMiningState === 'found'}
+              <div class="merge-suggestions__header">
+                <p>We already have merge-mining payout addresses linked to this wallet.</p>
+                <button
+                  type="button"
+                  class="btn merge-suggestions__cta"
+                  on:click={navigateToMergeMiningPage}
+                >
+                  Update addresses
+                </button>
+              </div>
+              <div class="merge-suggestions__grid">
+                {#each mergeMiningAddresses as entry}
+                  <div class="merge-suggestion">
+                    <div class="merge-suggestion__title">
+                      <span>{entry.label}</span>
+                      <small>{entry.coinId}</small>
+                    </div>
+                    <div class="merge-suggestion__address" title={entry.address}>
+                      {entry.address}
+                    </div>
+                    {#if entry.signature}
+                      <div class="merge-suggestion__signature">
+                        sig {entry.signature.slice(0, 8)}…{entry.signature.slice(-4)}
+                      </div>
+                    {/if}
+                  </div>
+                {/each}
+              </div>
+            {:else if mergeMiningState === 'not-found'}
+              <div class="merge-suggestions__info">
+                <p class="note__text">
+                  We could not find saved merge-mining payout addresses for this wallet yet.
+                </p>
+                <button
+                  type="button"
+                  class="btn merge-suggestions__cta"
+                  on:click={navigateToMergeMiningPage}
+                >
+                  Add them now
+                </button>
+              </div>
+            {:else if mergeMiningState === 'error'}
+              <p class="field-error">
+                {mergeMiningError || 'Unable to reach the merge mining relay right now.'}
+              </p>
+            {/if}
+          </div>
+        {/if}
 
         <div>
           <div class="setkey">Stratum URL</div>
@@ -1197,6 +1187,80 @@
 }
 
 
+
+  .merge-suggestions {
+    background: rgba(247, 249, 255, 0.8);
+    border: 1px solid rgba(147, 197, 253, 0.6);
+    border-radius: 14px;
+    padding: 1.25rem;
+    margin-bottom: 1rem;
+    display: flex;
+    flex-direction: column;
+    gap: 0.75rem;
+  }
+
+  .merge-suggestions__header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 1rem;
+    flex-wrap: wrap;
+  }
+
+  .merge-suggestions__grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 0.9rem;
+  }
+
+  .merge-suggestion {
+    border-radius: 12px;
+    border: 1px solid rgba(147, 197, 253, 0.4);
+    padding: 0.85rem 1rem;
+    background: #ffffff;
+    box-shadow: 0 12px 24px -20px rgba(12, 46, 94, 0.35);
+    display: flex;
+    flex-direction: column;
+    gap: 0.35rem;
+  }
+
+  .merge-suggestion__title {
+    display: flex;
+    align-items: baseline;
+    gap: 0.35rem;
+    font-weight: 600;
+  }
+
+  .merge-suggestion__title small {
+    font-size: 0.8rem;
+    color: rgba(10, 31, 51, 0.6);
+    text-transform: uppercase;
+    letter-spacing: 0.16em;
+  }
+
+  .merge-suggestion__address {
+    font-weight: 600;
+    color: #0a1f33;
+    word-break: break-all;
+    font-size: 0.95rem;
+  }
+
+  .merge-suggestion__signature {
+    font-size: 0.8rem;
+    color: rgba(10, 31, 51, 0.6);
+  }
+
+  .merge-suggestions__info {
+    display: flex;
+    flex-direction: column;
+    gap: 0.4rem;
+  }
+
+  .merge-suggestions__cta {
+    padding: 0.6rem 1.4rem;
+    font-size: 0.95rem;
+    border-radius: 999px;
+  }
 
   @media (max-width: 640px) {
     .output__header {

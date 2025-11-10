@@ -1,7 +1,16 @@
+<script>
+  import { scrollToSection } from '../utils/scrollToSection.js';
+
+  const handleGetStartedClick = (event) => {
+    event.preventDefault();
+    scrollToSection('generate');
+  };
+</script>
+
 <footer>
   <div class="container">
     <div class="links">
-      <a href="/#generate">Get started</a>
+      <a href="/" on:click={handleGetStartedClick}>Get started</a>
       <a href="/terms/">Terms</a>
       <a href="/privacy/">Privacy</a>
     </div>

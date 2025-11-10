@@ -1,5 +1,14 @@
 
 
+<script>
+  import { scrollToSection } from '../utils/scrollToSection.js';
+
+  const handleStartMiningClick = (event) => {
+    event.preventDefault();
+    scrollToSection('generate');
+  };
+</script>
+
 <section class="hero">
   <div class="container hero__inner">
     <div class="nomo"><div class="pill">Mine Smarter. Earn Transparently.</div></div>
@@ -14,7 +23,7 @@
     <!--<p>Merge mine $DOGE, $BELLS, $PEP and $FLC — with verifiable proof for every share you submit.</p>-->
     <p>Maximize your mining efficiency — merge mine multiple coins using the same energy, with verifiable proof for every share you submit.</p>
     <div class="cta-row s100btn">
-      <a class="btn primary s100btn" href="#generate">Start Mining</a>
+      <a class="btn primary s100btn" href="/" on:click={handleStartMiningClick}>Start Mining</a>
       <a class="btn secondary" href="#dashboard">Track your shares</a>
     </div>
   </div>

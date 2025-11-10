@@ -1,5 +1,7 @@
 <script>
   let isMenuOpen = false;
+ 
+  import { scrollToSection } from '../utils/scrollToSection.js';
 
   const links = [
     { href: '/#about', label: 'About' },
@@ -42,6 +44,12 @@
       scrollToHash(url.hash);
     }
   };
+
+  const handleStartMiningClick = (event) => {
+    event.preventDefault();
+    scrollToSection('generate');
+    closeMenu();
+  };
 </script>
 
 <header class="site-header">
@@ -80,8 +88,8 @@
       </ul>
       <a
         class="btn secondary header__cta"
-        href="/#generate"
-        on:click={(event) => handleAnchorNavClick(event, '/#generate')}
+        href="/"
+        on:click={handleStartMiningClick}
       >
         Start Mining
       </a>

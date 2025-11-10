@@ -15,12 +15,13 @@ export default defineConfig({
         main: resolve(__dirname, 'index.html'),
         terms: resolve(__dirname, 'terms/index.html'),
         privacy: resolve(__dirname, 'privacy/index.html'),
-        contact: resolve(__dirname, 'contact/index.html')
+        contact: resolve(__dirname, 'contact/index.html'),
+        mergeMining: resolve(__dirname, 'merge-mining/index.html'),
       }
     }
   },
   server: {
-    allowedHosts: ['*'],
+    allowedHosts: ['lab.in.ionance.com'],
     host: '0.0.0.0',
   }
 });
