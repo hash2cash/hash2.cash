@@ -1,12 +1,20 @@
 <script>
+  import { getFlcAddressError } from '../utils/addressValidation.js';
+
   let minerAddress = '';
+  let addressError = '';
 
   const handleSubmit = (event) => {
     event.preventDefault();
-    if (!minerAddress.trim()) {
+    const validationError = getFlcAddressError(minerAddress, { allowEmpty: false });
+    addressError = validationError;
+    if (validationError) {
       return;
     }
-    window.location.href = `/sharenotes/${minerAddress}`;
+    const targetUrl = `https://hashboard.hash2.cash/address/${encodeURIComponent(minerAddress.trim())}`;
+    if (typeof window !== 'undefined') {
+      window.open(targetUrl, '_blank', 'noopener,noreferrer');
+    }
   };
 </script>
 
@@ -27,10 +35,14 @@
             bind:value={minerAddress}
             placeholder="Enter your FLC payout address"
             autocomplete="off"
+            on:input={() => (addressError = '')}
           />
           
           <button class="btn primary br12" type="submit">Open hashboard</button>
         </div>
+        {#if addressError}
+          <p class="dashboard__error">{addressError}</p>
+        {/if}
       </form>
     </div>
   </div>
@@ -85,4 +97,8 @@
   }
   .br12{border-radius: 12px;}
   .pbt0{padding:1rem}
+  .dashboard__error {
+    color: #d13b3b;
+    font-size: 0.9rem;
+  }
 </style>

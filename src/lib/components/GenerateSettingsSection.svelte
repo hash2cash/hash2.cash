@@ -32,7 +32,7 @@
     'EH/s': HashrateUnit.EHps,
   };
   const DEFAULT_NOTE = '0';
-  const MERGE_MINING_PAGE = '/merge-mining';
+  const MERGE_MINING_PAGE = '/merge-mining/';
 
   let wallet = '';
   let worker = '';
@@ -69,7 +69,7 @@
   let mergeMiningAddresses = [];
   let mergeMiningError = '';
 
-  let stratumUrl = 'stratum+tcp://hash2.cash:3333';
+  let stratumUrl = 'stratum+tcp://pool.hash2.cash:3333';
   let sUser = '';
   let sPass = '';
 
@@ -271,7 +271,7 @@
     if (normalized) {
       targetUrl.searchParams.set('address', normalized);
     }
-    window.location.href = targetUrl.href;
+    window.open(targetUrl.href, '_blank', 'noopener');
   }
 
   function setWalletValidity(message) {
