@@ -1,7 +1,7 @@
 import { relayInit } from 'nostr-tools';
 
 export const MERGE_MINING_RELAY_URL = 'wss://sharenote.ohstr.com';
-export const MERGE_MINING_KIND = 30001;
+export const MERGE_MINING_KIND = 35555;
 export const MERGE_MINING_TIMEOUT_MS = 6000;
 export const MERGE_MINING_COINS = [
   { id: 'doge', label: 'DOGE', icon: 'doge' },

@@ -69,7 +69,7 @@
   let mergeMiningAddresses = [];
   let mergeMiningError = '';
 
-  let stratumUrl = 'stratum+tcp://pool.hash2.cash:3333';
+  let stratumUrl = 'stratum+tcp://pool.hash2.cash:3510';
   let sUser = '';
   let sPass = '';
 

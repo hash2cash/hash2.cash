@@ -47,6 +47,14 @@
     }
     if (field === 'signature') {
       coinSignatureTouchedMap = { ...coinSignatureTouchedMap, [id]: true };
+      if (statusError === 'Add missing signatures before publishing.') {
+        const missingSignatureExists = coinInputs.some(
+          (entry) => !`${entry.signature ?? ''}`.trim()
+        );
+        if (!missingSignatureExists) {
+          statusError = '';
+        }
+      }
     }
   };
 
